@@ -1,8 +1,8 @@
 _target_: calvin_agent.datasets.shm_dataset.ShmDataset
 key: "lang"
 batch_size: 32
-min_window_size: 20
-max_window_size: 32
+min_window_size: 10
+max_window_size: 20
 proprio_state: ${datamodule.proprioception_dims}
 obs_space: ${datamodule.observation_space}
 pad: true
