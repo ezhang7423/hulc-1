@@ -2,7 +2,7 @@ defaults:
   - perceptual_encoder: gripper_cam
   - plan_proposal: default
   - plan_recognition: transformers
-  - distribution:  discrete
+  - distribution: discrete
   - visual_goal: default
   - language_goal: default
   - action_decoder: hulc_default
@@ -24,6 +24,6 @@ use_bc_z_auxiliary_loss: false
 bc_z_auxiliary_loss_beta: ${loss.bc_z_auxiliary_loss_beta}
 use_mia_auxiliary_loss: false
 mia_auxiliary_loss_beta: ${loss.mia_auxiliary_loss_beta}
-replan_freq: 30
+replan_freq: 16
 use_clip_auxiliary_loss: true
 clip_auxiliary_loss_beta: ${loss.clip_auxiliary_loss_beta}

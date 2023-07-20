@@ -77,7 +77,7 @@ class Hulc(pl.LightningModule, CalvinBaseModel):
         val_instructions: DictConfig,
         use_clip_auxiliary_loss: bool,
         clip_auxiliary_loss_beta: float,
-        replan_freq: int = 30,
+        replan_freq: int = 16,
         bc_z_lang_decoder: Optional[DictConfig] = None,
         mia_lang_discriminator: Optional[DictConfig] = None,
         proj_vis_lang: Optional[DictConfig] = None,
