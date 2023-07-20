@@ -1,0 +1,22 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "hulc/training.py",
+      "args": [
+        "trainer.devices=1",
+        "datamodule.root_data_dir=dataset/task_D_D/",
+        "datamodule/datasets=vision_lang_shm",
+        "logger=tb_logger"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}
