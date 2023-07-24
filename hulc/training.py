@@ -64,7 +64,7 @@ def train(cfg: DictConfig) -> None:
     # Configure multi-GPU training
     if is_multi_gpu_training(trainer_args["devices"]):
         # increase default timeout for loading data into shared memory
-        trainer_args["strategy"] = DDPStrategy(find_unused_parameters=False, timeout=timedelta(seconds=3600))
+        trainer_args["strategy"] = DDPStrategy(find_unused_parameters=True, timeout=timedelta(seconds=3600))
         if not cfg.slurm:
             modify_argv_hydra()
 
