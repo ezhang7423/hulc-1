@@ -12,7 +12,9 @@
       "args": [
         "trainer.devices=1",
         "datamodule/datasets=vision_lang_shm",
-        "logger=tb_logger"
+        "logger=tb_logger",
+        "model=gcbc",
+        "callbacks.rollout_lh.resample_freq=16"
       ],
       "console": "integratedTerminal",
       "justMyCode": true

@@ -16,3 +16,4 @@ log_video_to_file: false
 save_dir: ./videos
 lang_folder: ${datamodule.datasets.lang_dataset.lang_folder}
 debug: false
+resample_freq:

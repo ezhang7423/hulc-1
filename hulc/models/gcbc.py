@@ -305,7 +305,7 @@ class GCBC(Hulc):
                         k: torch.cat([v, goal["rgb_obs"][k]], dim=1) for k, v in obs["rgb_obs"].items()
                     }  # (1, 2, C, H, W)
                     depth_imgs = {k: torch.cat([v, goal["depth_obs"][k]], dim=1) for k, v in obs["depth_obs"].items()}
-                    state = torch.cat([obs["robot_obs"], goal["robot_obs"]], dim=1)
+                    state = None
                     perceptual_emb = self.perceptual_encoder(imgs, depth_imgs, state)
                     self.latent_goal = self.visual_goal(perceptual_emb[:, -1])
 
