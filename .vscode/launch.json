@@ -14,7 +14,25 @@
         "datamodule/datasets=vision_lang_shm",
         "logger=tb_logger",
         "model=gcbc",
-        "callbacks.rollout_lh.resample_freq=16"
+        "callbacks.rollout_lh.resample_freq=16"        
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Python: debug",
+      "type": "python",
+      "request": "launch",
+      "program": "hulc/training.py",
+      "args": [
+        "trainer.devices=1",
+        "datamodule/datasets=vision_lang_shm",
+        "logger=tb_logger",
+        "model=gcbc",
+        "callbacks.rollout_lh.resample_freq=16"        ,
+        "callbacks.rollout_lh.skip_epochs=0",
+        "callbacks.rollout_lh.num_sequences=16"
+
       ],
       "console": "integratedTerminal",
       "justMyCode": true

@@ -18,7 +18,7 @@ from pytorch_lightning.loggers import Logger
 from pytorch_lightning.utilities import rank_zero_only
 
 import hulc
-import hulc.models.hulc as models_m
+import hulc.models.gcbc as models_m
 from hulc.utils.utils import initialize_pretrained_weights
 
 logger = logging.getLogger(__name__)
