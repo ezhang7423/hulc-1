@@ -24,6 +24,7 @@
       "type": "python",
       "request": "launch",
       "program": "hulc/training.py",
+      "env": {"CUDA_VISIBLE_DEVICES": "3"},
       "args": [
         "trainer.devices=1",
         "datamodule/datasets=vision_lang_shm",
