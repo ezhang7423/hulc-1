@@ -8,6 +8,6 @@ proprio_state: ${datamodule.proprioception_dims}
 obs_space: ${datamodule.observation_space}
 skip_frames: 1
 pad: true
-lang_folder: "lang_paraphrase-MiniLM-L3-v2"
+lang_folder: "lang_annotations"
 aux_lang_loss_window: 8
 num_workers: 2
