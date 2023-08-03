@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd calvin
+cd calvin_env_repo
 ./install.sh
 
 pip install -e ./hiveformer
