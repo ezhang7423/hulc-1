@@ -1,5 +1,5 @@
 [submodule "calvin"]
-	path = calvin
+	path = calvin_env_repo
 	url = git@github.com:ezhang7423/calvin-1.git
 [submodule "hiveformer"]
 	path = hiveformer
