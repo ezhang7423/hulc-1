@@ -1,19 +1,15 @@
 import logging
-from typing import Any, Dict, NamedTuple, Optional, Tuple, Union
+from typing import Any, Dict
 
 from calvin_agent.models.calvin_base_model import CalvinBaseModel
 import hydra
 import numpy as np
-from omegaconf import DictConfig
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+from pytorch_lightning.utilities import rank_zero_only
 import torch
-import torch.distributions as D
-import torch.nn as nn
-from torch.nn.functional import binary_cross_entropy_with_logits, cross_entropy
+import pybullet as p
+import torchvision
 
-from hulc.models.decoders.action_decoder import ActionDecoder
-from hulc.utils.distributions import State
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +56,66 @@ class AttriDict(dict):
     def copy(self):
         return self.__copy__()
 
+# from hiveformer/preprocess/generate_dataset_keysteps.py:35, rlbench/utils.py:257, PyRep/pyrep/objects/vision_sensor.py
 
+def _create_uniform_pixel_coords_image(resolution: np.ndarray):
+    pixel_x_coords = np.reshape(
+        np.tile(np.arange(resolution[1]), [resolution[0]]),
+        (resolution[0], resolution[1], 1)).astype(np.float32)
+    pixel_y_coords = np.reshape(
+        np.tile(np.arange(resolution[0]), [resolution[1]]),
+        (resolution[1], resolution[0], 1)).astype(np.float32)
+    pixel_y_coords = np.transpose(pixel_y_coords, (1, 0, 2))
+    uniform_pixel_coords = np.concatenate(
+        (pixel_x_coords, pixel_y_coords, np.ones_like(pixel_x_coords)), -1)
+    return uniform_pixel_coords
+
+
+def _transform(coords, trans):
+    h, w = coords.shape[:2]
+    coords = np.reshape(coords, (h * w, -1))
+    coords = np.transpose(coords, (1, 0))
+    transformed_coords_vector = np.matmul(trans, coords)
+    transformed_coords_vector = np.transpose(
+        transformed_coords_vector, (1, 0))
+    return np.reshape(transformed_coords_vector,
+                      (h, w, -1))
+
+
+def _pixel_to_world_coords(pixel_coords, cam_proj_mat_inv):
+    h, w = pixel_coords.shape[:2]
+    pixel_coords = np.concatenate(
+        [pixel_coords, np.ones((h, w, 1))], -1)
+    world_coords = _transform(pixel_coords, cam_proj_mat_inv)
+    world_coords_homo = np.concatenate(
+        [world_coords, np.ones((h, w, 1))], axis=-1)
+    return world_coords_homo
+
+def pointcloud_from_depth_and_camera_params(
+            depth: np.ndarray, extrinsics: np.ndarray,
+            intrinsics: np.ndarray) -> np.ndarray:
+        """Converts depth (in meters) to point cloud in word frame.
+        :return: A numpy array of size (width, height, 3)
+        """
+        upc = _create_uniform_pixel_coords_image(depth.shape)
+        pc = upc * np.expand_dims(depth, -1)
+        C = np.expand_dims(extrinsics[:3, 3], 0).T
+        R = extrinsics[:3, :3]
+        R_inv = R.T  # inverse of rot matrix is transpose
+        R_inv_C = np.matmul(R_inv, C)
+        extrinsics = np.concatenate((R_inv, -R_inv_C), -1)
+        cam_proj_mat = np.matmul(intrinsics, extrinsics)
+        cam_proj_mat_homo = np.concatenate(
+            [cam_proj_mat, [np.array([0, 0, 0, 1])]])
+        cam_proj_mat_inv = np.linalg.inv(cam_proj_mat_homo)[0:3]
+        world_coords_homo = np.expand_dims(_pixel_to_world_coords(
+            pc, cam_proj_mat_inv), 0)
+        world_coords = world_coords_homo[..., :-1][0]
+        return world_coords
+    
+    
 class Hiveformer(pl.LightningModule, CalvinBaseModel):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, lr_scheduler, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         from hiveformer.models.transformer_unet import TransformerUNet
 
@@ -81,9 +134,37 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
             num_cams=3,
             latent_im_size=(8, 8),
         )
+        self.resize200 = torchvision.transforms.Resize(200)
+        self.lr_scheduler = lr_scheduler
+        #! need direct dataaset, language embeddings with each sample. assert this is true
 
-    #! need direct dataaset, language embeddings with each sample. assert this is true
-    #! translate i/o of hiveformer
+    def preprocess(self, batch): 
+        breakpoint()
+        pos_orn = batch['state_info']['robot_obs'][:6]
+        camera_pos, camera_orn = pos_orn[:3], pos_orn[3:]
+        # from calvin_env_repo/calvin_env/calvin_env/camera/gripper_camera.py        
+        cam_rot = p.getMatrixFromQuaternion(camera_orn)
+        cam_rot = np.array(cam_rot).reshape(3, 3)
+        cam_rot_y, cam_rot_z = cam_rot[:, 1], cam_rot[:, 2]
+
+        view_matrix = p.computeViewMatrix(camera_pos, camera_pos + cam_rot_y, -cam_rot_z)
+        projection_matrix = p.computeProjpectionMatrixFOV(
+            fov=self.fov, aspect=self.aspect, nearVal=self.nearval, farVal=self.farval
+        )        
+        static_pc = pointcloud_from_depth_and_camera_params(batch["depth_obs"]['depth_static'], [], [])
+        gripper_pc = pointcloud_from_depth_and_camera_params(batch["depth_obs"]['depth_gripper'], view_matrix, projection_matrix)
+        
+        
+        model_input = AttriDict(
+            rgbs=torch.stack((batch["rgb_obs"]["rgb_static"], self.resize200(batch["rgb_obs"]["rgb_gripper"])), dim=2),
+            pc_obs=torch.stack((static_pc, gripper_pc), dim=2),
+            step_masks=torch.ones(1, batch["rgb_obs"]["rgb_static"].size(1)).long(),  #! check. just masking out the null steps
+            instr_embeds=batch['language'],
+            txt_masks=torch.ones(1, batch['language'].size(1)).long(), #! check. just masking out the null lang
+        )
+        return model_input
+    
+    
     def training_step(self, batch: Dict[str, Dict], batch_idx: int) -> torch.Tensor:  # type: ignore
         """
         Compute and return the training loss.
@@ -110,14 +191,31 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
                             auxiliary loss.
             batch_idx (int): Integer displaying index of this batch.
 
+        The robot proprioceptive information, which also includes joint positions can be accessed with:
 
+        ['rel_actions']
+        (dtype=np.float32, shape=(7,))
+        tcp position (3): x,y,z in relative world coordinates normalized and clipped to (-1, 1) with scaling factor 50
+        tcp orientation (3): euler angles x,y,z in relative world coordinates normalized and clipped to (-1, 1) with scaling factor 20
+        gripper_action (1): binary (close = -1, open = 1)
+
+        ['robot_obs']
+        (dtype=np.float32, shape=(15,))
+        tcp position (3): x,y,z in world coordinates
+        tcp orientation (3): euler angles x,y,z in world coordinates
+        gripper opening width (1): in meter
+        arm_joint_states (7): in rad
+        gripper_action (1): binary (close = -1, open = 1)
+        
         Returns:
             loss tensor
         """
-        batch["rgb_obs"]["rgb_static"], batch["rgb_obs"]["rgb_gripper"]
-        losses, logits = self.model(batch, compute_loss=True)
 
-        return total_loss
+        losses, logits = self.model(self.preprocess(batch), compute_loss=True)
+        for k in losses:
+            self.log(f'train/{k}', losses[k])
+
+        return losses['total']
 
     def validation_step(self, batch: Dict[str, Dict], batch_idx: int) -> Dict[str, torch.Tensor]:  # type: ignore
         """
@@ -149,106 +247,48 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
             Dictionary containing the sampled plans of plan recognition and plan proposal networks, as well as the
             episode indices.
         """
-        output = {}
-        val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
-        for self.modality_scope, dataset_batch in batch.items():
-            perceptual_emb = self.perceptual_encoder(
-                dataset_batch["rgb_obs"], dataset_batch["depth_obs"], dataset_batch["robot_obs"]
-            )
-            if self.state_recons:
-                state_recon_loss = self.perceptual_encoder.state_reconstruction_loss()
-                self.log(f"val/proprio_loss_{self.modality_scope}", state_recon_loss, sync_dist=True)
-            if "lang" in self.modality_scope:
-                latent_goal = self.language_goal(dataset_batch["lang"])
-            else:
-                latent_goal = self.visual_goal(perceptual_emb[:, -1])
+        losses, logits = self.model(self.preprocess(batch), compute_loss=True)
+        for k in losses:
+            self.log(f'val/{k}', losses[k])
+        return losses
 
-            (
-                sampled_plan_pp,
-                action_loss_pp,
-                sampled_plan_pr,
-                action_loss_pr,
-                kl_loss,
-                mae_pp,
-                mae_pr,
-                gripper_sr_pp,
-                gripper_sr_pr,
-                seq_feat,
-            ) = self.lmp_val(
-                perceptual_emb, latent_goal, dataset_batch["actions"], dataset_batch["state_info"]["robot_obs"]
-            )
-            if "lang" in self.modality_scope:
-                if self.use_bc_z_auxiliary_loss:
-                    val_pred_lang_loss = self.bc_z_auxiliary_loss(
-                        seq_feat, dataset_batch["lang"], dataset_batch["use_for_aux_lang_loss"]
-                    )
-                    self.log("val/lang_pred_loss", val_pred_lang_loss, sync_dist=True)
-                if self.use_clip_auxiliary_loss:
-                    val_pred_clip_loss = self.clip_auxiliary_loss(
-                        seq_feat, latent_goal, dataset_batch["use_for_aux_lang_loss"]
-                    )
-                    self.log("val/val_pred_clip_loss", val_pred_clip_loss, sync_dist=True)
-                    self.clip_groundtruth(seq_feat, dataset_batch["idx"], dataset_batch["use_for_aux_lang_loss"])
-                if self.use_mia_auxiliary_loss:
-                    val_pred_contrastive_loss = self.mia_auxiliary_loss(
-                        seq_feat, latent_goal, dataset_batch["use_for_aux_lang_loss"]
-                    )
-                    self.log("val/lang_contrastive_loss", val_pred_contrastive_loss, sync_dist=True)
-            val_total_act_loss_pp += action_loss_pp
-            pr_mae_mean = mae_pr.mean()
-            pp_mae_mean = mae_pp.mean()
-            pos_mae_pp = mae_pp[..., :3].mean()
-            pos_mae_pr = mae_pr[..., :3].mean()
-            orn_mae_pp = mae_pp[..., 3:6].mean()
-            orn_mae_pr = mae_pr[..., 3:6].mean()
-            self.log(f"val_total_mae/{self.modality_scope}_total_mae_pr", pr_mae_mean, sync_dist=True)
-            self.log(f"val_total_mae/{self.modality_scope}_total_mae_pp", pp_mae_mean, sync_dist=True)
-            self.log(f"val_pos_mae/{self.modality_scope}_pos_mae_pr", pos_mae_pr, sync_dist=True)
-            self.log(f"val_pos_mae/{self.modality_scope}_pos_mae_pp", pos_mae_pp, sync_dist=True)
-            self.log(f"val_orn_mae/{self.modality_scope}_orn_mae_pr", orn_mae_pr, sync_dist=True)
-            self.log(f"val_orn_mae/{self.modality_scope}_orn_mae_pp", orn_mae_pp, sync_dist=True)
-            self.log(f"val_kl/{self.modality_scope}_kl_loss", kl_loss, sync_dist=True)
-            self.log(f"val_act/{self.modality_scope}_act_loss_pp", action_loss_pp, sync_dist=True)
-            self.log(f"val_act/{self.modality_scope}_act_loss_pr", action_loss_pr, sync_dist=True)
-            self.log(f"val_grip/{self.modality_scope}_grip_sr_pr", gripper_sr_pr, sync_dist=True)
-            self.log(f"val_grip/{self.modality_scope}_grip_sr_pp", gripper_sr_pp, sync_dist=True)
-            self.log(
-                "val_act/action_loss_pp",
-                val_total_act_loss_pp / len(self.trainer.datamodule.modalities),  # type:ignore
-                sync_dist=True,
-            )
-            output[f"sampled_plan_pp_{self.modality_scope}"] = sampled_plan_pp
-            output[f"sampled_plan_pr_{self.modality_scope}"] = sampled_plan_pr
-            output[f"idx_{self.modality_scope}"] = dataset_batch["idx"]
-
-        return output
 
     def reset(self):
         pass
 
     def step(self, obs, goal):
-        pass
+        obs['language'] = goal        
+        return self.model(self.preprocess(obs)) #! check out
 
     def configure_optimizers(self):
+        """
+        optim: 'adamw'
+        learning_rate: 5e-4
+        lr_sched: 'linear' # inverse_sqrt, linear
+        betas: [0.9, 0.98]
+        weight_decay: 0.001
+        grad_norm: 5
+        dropout: 0.1
+        train_batch_size: 16
+        gradient_accumulation_steps: 1
+        num_epochs: null
+        num_train_steps: 300000
+        warmup_steps: 2000
+        log_steps: 1000
+        save_steps: 5000        
+        """
+             
         from hiveformer.optim.misc import build_optimizer
 
         cfg = self.optimizer_config
 
-        opts = AttriDict({"optim": str(cfg.__target__).split(".")[-1], "learning_rate": cfg.lr, "betas": [0.9, 0.98]})
+        opts = AttriDict({"optim": str(cfg.__target__).split(".")[-1], "learning_rate": cfg.lr, "betas": [0.9, 0.98]}) #! rm betas in future
 
         optimizer = build_optimizer(self, opts)
-
-        if "num_warmup_steps" in self.lr_scheduler:
-            self.lr_scheduler.num_training_steps, self.lr_scheduler.num_warmup_steps = self.compute_warmup(
-                num_training_steps=self.lr_scheduler.num_training_steps,
-                num_warmup_steps=self.lr_scheduler.num_warmup_steps,
-            )
-            rank_zero_info(f"Inferring number of training steps, set to {self.lr_scheduler.num_training_steps}")
-            rank_zero_info(f"Inferring number of warmup steps from ratio, set to {self.lr_scheduler.num_warmup_steps}")
-
         scheduler = hydra.utils.instantiate(self.lr_scheduler, optimizer)
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step", "frequency": 1},
         }
+h
