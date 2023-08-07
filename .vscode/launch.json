@@ -8,12 +8,21 @@
       "name": "Python: Current File",
       "type": "python",
       "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Python: full train",
+      "type": "python",
+      "request": "launch",
       "program": "hulc/training.py",
       "args": [
         "trainer.devices=1",
-        "datamodule.root_data_dir=dataset/task_D_D/",
+        "datamodule.root_data_dir=/home/ubuntu/lcd-neurips/submodules/hulc-baseline/dataset/task_D_D",
         "datamodule/datasets=vision_lang_shm",
-        "logger=tb_logger"
+        "logger=tb_logger",
+        "model=hiveformer"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
