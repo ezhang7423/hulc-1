@@ -62,8 +62,10 @@ class AttriDict(dict):
     def copy(self):
         return self.__copy__()
 
+
 def chw(t):
-    return rea(t, 'h w c -> c h w')
+    return rea(t, "h w c -> c h w")
+
 
 def distance_map_to_point_cloud(distances, fov, width, height):
     """Converts from a depth map to a point cloud.
@@ -81,23 +83,27 @@ def distance_map_to_point_cloud(distances, fov, width, height):
     fov = math.radians(fov)
     f = height / (2 * math.tan(fov / 2.0))
     px = torch.tile(torch.arange(width), [height, 1]).to(distances)
-    x = (2 * (px + 0.5) - width) / f * distances / 2    
+    x = (2 * (px + 0.5) - width) / f * distances / 2
     py = torch.tile(torch.arange(height), [width, 1]).T.to(distances)
-    y = (2 * (py + 0.5) - height) / f * distances / 2    
+    y = (2 * (py + 0.5) - height) / f * distances / 2
     point_cloud = torch.stack((x, y, distances), dim=-1)
     return point_cloud
 
+
 def plot_3d(t):
     import matplotlib
-    matplotlib.use('agg')
+
+    matplotlib.use("agg")
     import matplotlib.pyplot as plt
     from mpl_toolkits import mplot3d
     from einops import asnumpy
+
     fig = plt.figure()
-    ax = plt.axes(projection='3d')
+    ax = plt.axes(projection="3d")
     x, y, z = asnumpy(t)
-    ax.scatter3D(x, y, z, c=z, cmap='viridis')
-    plt.savefig('test.png')
+    ax.scatter3D(x, y, z, c=z, cmap="viridis")
+    plt.savefig("test.png")
+
 
 def invert_extrinsic_matrix(matrix):
     # returns NOT HOMOGENOUS COORDINATES. returns 3x4
@@ -107,13 +113,12 @@ def invert_extrinsic_matrix(matrix):
     R_transpose = R.t()
     t_new = -torch.mm(R_transpose, t.unsqueeze(1)).squeeze()
     # inv_matrix = torch.eye(4).to(matrix)
-    return torch.concat((R_transpose, t_new[:, None]), dim=-1) # 3 x 4
-
+    return torch.concat((R_transpose, t_new[:, None]), dim=-1)  # 3 x 4
 
 
 def point_cloud(distances, fov, width, height, inv_extrinsic):
     bsz = distances.shape[0]
-    pc = distance_map_to_point_cloud(distances, fov, width, height)  # (B, L, H, W, XYZ)    
+    pc = distance_map_to_point_cloud(distances, fov, width, height)  # (B, L, H, W, XYZ)
     # add homo
     rea_pc = rea(pc, "B L H W XYZ -> (B L) XYZ (H W)")
     L, _, HW = rea_pc.shape
@@ -125,12 +130,14 @@ def point_cloud(distances, fov, width, height, inv_extrinsic):
     rea_ret = torch.bmm(rea_inv_extrinsic, rea_pc_homo)
     return rea(rea_ret, "(B L) XYZ (H W) -> B L XYZ H W", B=bsz, H=height)
 
+
 def compute_view_matrix(look_from, look_at, up_vector):
     import torch.nn.functional as F
+
     # 1. Compute the forward, right, and up vectors for the camera.
-    z_axis = F.normalize((look_from - look_at), dim=0)   # Forward vector
+    z_axis = F.normalize((look_from - look_at), dim=0)  # Forward vector
     x_axis = F.normalize(torch.cross(up_vector, z_axis), dim=0)  # Right vector
-    y_axis = F.normalize(torch.cross(z_axis, x_axis), dim=0)     # True up vector
+    y_axis = F.normalize(torch.cross(z_axis, x_axis), dim=0)  # True up vector
 
     # 2. Construct the rotation matrix using these vectors.
     rotation = torch.stack([x_axis, y_axis, z_axis], dim=1)
@@ -145,11 +152,12 @@ def compute_view_matrix(look_from, look_at, up_vector):
 
     return view_matrix
 
+
 class Resize(torch.nn.Module):
     def __init__(self, size: int) -> None:
         super().__init__()
         self.size = size
-        self.resizer = torchvision.transforms.Resize(200)
+        self.resizer = torchvision.transforms.Resize(size)
 
     def forward(self, inp):
         bsz = inp.shape[0]
@@ -162,21 +170,21 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
         super().__init__(*args, **kwargs)
 
         self.model = TransformerUNet(
-            hidden_size=16,
-            num_layers=4,
+            hidden_size=32,
+            num_layers=5,
             num_tasks=None,
-            max_steps=20,
+            max_steps=70,
             gripper_channel=False,
-            unet=False,
+            unet=True,
             use_instr_embed="all",
             instr_embed_size=384,
             num_trans_layers=1,
             nhead=8,
-            txt_attn_type="self",
-            num_cams=3,
-            latent_im_size=(8, 8),
+            txt_attn_type="cross",
+            num_cams=2,
+            latent_im_size=(6, 6),
         )
-        self.resize200 = Resize(200)
+        self.resize192 = Resize(192)
         self.lr_scheduler = lr_scheduler
         self.optimizer_config = optimizer
         self.lang_embeddings = None
@@ -185,57 +193,62 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
             invert_extrinsic_matrix(
                 torch.tensor(
                     [
-                        [0.72324455, -0.03026059, 0.68992877, 0.21526623],
-                        [0.51412338, 0.69061059, -0.50865924, -0.26317155],
-                        [-0.46107975, 0.72259355, 0.51503795, -4.39916897],
-                        [0., 0., 0., 1.0],
+                        [0.72324455, -0.03026059, 0.68992877, 0.0],
+                        [0.51412338, 0.69061059, -0.50865924, 0.0],
+                        [-0.46107975, 0.72259355, 0.51503795, 0.0],
+                        [0.21526623, -0.26317155, -4.39916897, 1.0],
                     ]
-                )
+                ).T
             ),
         )
         #! need direct dataaset, language embeddings with each sample. assert this is true
 
     def preprocess(self, batch):
-        batch = batch["lang"]
-        pos_orn = batch["state_info"]["robot_obs"][:6].float()
-        camera_pos, camera_orn = pos_orn[..., :3], pos_orn[..., 3:6]  # (B, L, 3)
-        cam_rot = t.euler_angles_to_matrix(camera_orn, "XYZ")  # (B, L, 3, 3)
-        gripper_extrinsic = torch.concat((cam_rot, camera_pos[..., None]), dim=-1)
-        homo = torch.zeros_like(gripper_extrinsic)[:, :, :1]
-        homo[:, :, :, -1] = 1
+        # torch.save(batch, "/home/ubuntu/hulc-1/test_batch.pt")
+        try:
+            batch = batch["lang"]
+        except KeyError:
+            pass
         
-        gripper_extrinsic = torch.concat((gripper_extrinsic, homo), dim=-2)
+        if False: # not used during eval or training
+            pos_orn = batch["state_info"]["robot_obs"][:6].float()
+            camera_pos, camera_orn = pos_orn[..., :3], pos_orn[..., 3:6]  # (B, L, 3)
+            cam_rot = t.euler_angles_to_matrix(camera_orn, "XYZ")  # (B, L, 3, 3)
+            gripper_extrinsic = torch.concat((cam_rot, camera_pos[..., None]), dim=-1)
+            homo = torch.zeros_like(gripper_extrinsic)[:, :, :1]
+            homo[:, :, :, -1] = 1
 
-        from functorch import vmap
-        rea_gripper_extrinsic = vmap(invert_extrinsic_matrix)(rea(gripper_extrinsic, "B L H W -> (B L) H W"))
+            gripper_extrinsic = torch.concat((gripper_extrinsic, homo), dim=-2)
 
+            from functorch import vmap
+
+            rea_gripper_extrinsic = vmap(invert_extrinsic_matrix)(rea(gripper_extrinsic, "B L H W -> (B L) H W"))
+
+            gripper_pc = point_cloud(
+                batch["depth_obs"]["depth_gripper"], 75, 84, 84, rea(rea_gripper_extrinsic, "(B L) H W -> B L H W", B=bsz)
+            )
+        
         bsz, length, *_ = batch["depth_obs"]["depth_static"].shape
-        gripper_pc = point_cloud(batch["depth_obs"]["depth_gripper"], 
-                                 75, 84, 84, rea(rea_gripper_extrinsic, "(B L) H W -> B L H W", B=bsz))
         static_pc = point_cloud(
             batch["depth_obs"]["depth_static"], 10, 200, 200, self.static_extrinsic.expand(bsz, length, -1, -1)
         )
-
-
-        torch.save(asnumpy(static_pc[0, 0][:, ::5, ::5]), 'static_pc.pt')
-        torch.save(asnumpy(gripper_pc[0, 0][:, ::2, ::2]), 'gripper_pc.pt')
-        breakpoint()
-        plot_3d(static_pc[0, 0])
-        depth_static = np.uint8((asnumpy(batch["depth_obs"]["depth_static"][0, 0]) + 1) / 2 * 255)
-        # rgb_static = np.uint8(rea((asnumpy(batch["rgb_obs"]["rgb_static"][0, 0]) + 1) / 2 * 255, 'c h w -> h w c' ))
-        # from PIL import Image
-        # Image.fromarray(rgb_static).save('testing.png')
-        breakpoint()
+        try:
+            instr_embeds=batch["lang"][:, None]
+        except KeyError:
+            instr_embeds=batch["language"][:, None]
+        # plot_3d(static_pc[0, 0])
         model_input = AttriDict(
-            rgbs=torch.stack((batch["rgb_obs"]["rgb_static"], self.resize200(batch["rgb_obs"]["rgb_gripper"])), dim=2),
-            pcds=torch.stack((static_pc, self.resize200(gripper_pc)), dim=2),
-            step_masks=torch.ones(
-                1, batch["rgb_obs"]["rgb_static"].size(1)
-            ).long(),  #! check. just masking out the null steps
-            instr_embeds=batch["lang"],
-            txt_masks=torch.ones(1, 1),
+            rgbs=torch.stack(
+                (self.resize192(batch["rgb_obs"]["rgb_static"]), self.resize192(batch["rgb_obs"]["rgb_gripper"])), dim=2
+            ),
+            # pcds=torch.stack((self.resize192(static_pc), self.resize192(gripper_pc)), dim=2),
+            pcds=self.resize192(static_pc)[:, :, None].expand(-1, -1, 2, -1, -1, -1),  #! TODO align point clouds
+            step_masks=torch.ones(bsz, batch["rgb_obs"]["rgb_static"].size(1)).long(),
+            instr_embeds=instr_embeds,
+            txt_masks=torch.ones(bsz, 1),
             taskvar_ids=None,
-            step_ids=None,
+            step_ids=torch.arange(batch["rgb_obs"]["rgb_static"].size(1)).expand(bsz, -1),
+            actions=batch.get("actions"),
         )
         return model_input
 
@@ -334,7 +347,9 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
             embedded_lang = torch.from_numpy(self.lang_embeddings[goal]).to(self.device).squeeze(0).float()
 
         obs["language"] = embedded_lang
-        return self.model(self.preprocess(obs))  #! check out
+        actions = self.model(self.preprocess(obs)) 
+        actions[:,:, -1] = (actions[:, :, -1]  > 0.5).to(actions) * 2 - 1 # convert logit to -1, 1 based on 0.5 probability
+        return actions
 
     def configure_optimizers(self):
         """
@@ -389,6 +404,9 @@ class Hiveformer(pl.LightningModule, CalvinBaseModel):
 
 if __name__ == "__main__":
     s = Hiveformer(None, None)
+    import torchinfo
+
+    torchinfo.summary(s)
     s.to("cuda")
-    batch = {"lang": torch.load("/home/ubuntu/hulc-1/test_batch.pt")}
+    batch = torch.load("/home/ubuntu/hulc-1/test_batch.pt")
     s.training_step(batch, 0)
